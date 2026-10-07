@@ -7,7 +7,7 @@ export default function AuthCard({ mode, setMode, onAuth, notify }) {
   const set = (k) => (e) => { setF({ ...f, [k]: e.target.value }); setErr({ ...err, [k]: '' }) }
   const switchTo = (m) => { setMode(m); setErr({}) }
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault()
     const n = {}
     if (su && f.name.trim().length < 2) n.name = 'Enter your full name.'
@@ -16,7 +16,31 @@ export default function AuthCard({ mode, setMode, onAuth, notify }) {
     setErr(n)
     if (Object.keys(n).length) return
     const email = f.email.trim()
-    onAuth({ name: su ? f.name.trim() : email.split('@')[0], email, role: f.role })
+    const fallbackUser = { name: su ? f.name.trim() : email.split('@')[0], email, role: f.role }
+    try {
+      const r = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fallbackUser),
+      })
+      const d = await r.json()
+      onAuth(d.user || fallbackUser)
+    } catch {
+      onAuth(fallbackUser)
+    }
+  }
+
+  const googleSignIn = async () => {
+    try {
+      const r = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'google' }),
+      })
+      const d = await r.json()
+      if (d.user) return onAuth(d.user)
+    } catch {}
+    onAuth({ name: 'Aarav Sharma', email: 'aarav.sharma@gmail.com', role: f.role })
   }
   const field = (k, label, props) => (
     <div className="field">
@@ -52,7 +76,7 @@ export default function AuthCard({ mode, setMode, onAuth, notify }) {
         <button className="btn block" type="submit">{su ? 'Create account' : 'Log in'}</button>
       </form>
       <div className="or">or</div>
-      <button className="btn ghost block" type="button" onClick={() => notify('Google sign-in needs a backend')}>Continue with Google</button>
+      <button className="btn ghost block" type="button" onClick={googleSignIn}>Continue with Google</button>
       <p className="fine">{su ? 'By signing up you agree to the Terms and Privacy Policy.' : 'New here? Use Sign up above. It takes under a minute.'}</p>
     </aside>
   )

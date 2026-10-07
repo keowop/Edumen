@@ -9,6 +9,7 @@ import Logo from './components/Logo.jsx'
 import UserAvatar from './components/UserAvatar.jsx'
 import Profile from './pages/Profile.jsx'
 import NotifSheet from './components/NotifSheet.jsx'
+import AiHelpSheet from './components/AiHelpSheet.jsx'
 import { SESSIONS, THREADS, EXPERTS, REPLIES, MIN, fmtWhen, fmtLeft, slotToTs } from './data.js'
 
 const NAV = [['home', 'Home', 'home'], ['sessions', 'Sessions', 'calendar'], ['messages', 'Messages', 'chat'], ['saved', 'Saved', 'bookmark'], ['profile', 'Profile', 'user']]
@@ -22,6 +23,7 @@ export default function Shell({ user, theme, notify, onLogout, onUpdate }) {
   const [typing, setTyping] = useState({})
   const [notifs, setNotifs] = useState([])
   const [panel, setPanel] = useState(false)
+  const [aiHelp, setAiHelp] = useState(false)
   const [booking, setBooking] = useState(null)
   const [credits, setCredits] = useState(1500)
   const [prefs, setPrefs] = useState({ notif: true, lock: false })
@@ -30,6 +32,21 @@ export default function Shell({ user, theme, notify, onLogout, onUpdate }) {
   const fired = useRef(new Set())
   useEffect(() => { window.scrollTo(0, 0) }, [tab])
   useEffect(() => { const i = setInterval(() => setNow(Date.now()), 15000); return () => clearInterval(i) }, [])
+
+  // Sync initial dummy data state from backend
+  useEffect(() => {
+    fetch('/api/state')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return
+        if (Array.isArray(d.saved)) setSaved(d.saved)
+        if (typeof d.credits === 'number') setCredits(d.credits)
+        if (Array.isArray(d.sessions) && d.sessions.length) setSessions(d.sessions)
+        if (Array.isArray(d.threads) && d.threads.length) setThreads(d.threads)
+        if (d.prefs) setPrefs(d.prefs)
+      })
+      .catch(() => {})
+  }, [])
 
   // Push a notification: in-app list + toast, and a system notification when the app is in the background
   const push = useCallback((n) => {
@@ -50,13 +67,53 @@ export default function Shell({ user, theme, notify, onLogout, onUpdate }) {
     if (!viewing) push({ kind: 'message', title: ex.name, body: text, tag: 'msg' + expertId, target: { thread: expertId } })
   }, [push])
 
-  const send = (tid, text) => {
+  const send = async (tid, text) => {
     const t = threads.find((x) => x.id === tid)
-    setThreads((a) => a.map((x) => (x.id === tid ? { ...x, msgs: [...x.msgs, { me: true, t: text, ts: Date.now() }] } : x)))
+    if (!t) return
+    const userMsg = { me: true, t: text, ts: Date.now() }
+    const updatedMsgs = [...t.msgs, userMsg]
+    setThreads((a) => a.map((x) => (x.id === tid ? { ...x, msgs: updatedMsgs } : x)))
     const n = t.msgs.length
-    setTimeout(() => setTyping((o) => ({ ...o, [tid]: true })), 700)
-    setTimeout(() => { setTyping((o) => ({ ...o, [tid]: false })); receive(t.expertId, REPLIES[n % REPLIES.length]) }, 2600)
+    setTimeout(() => setTyping((o) => ({ ...o, [tid]: true })), 400)
+
+    try {
+      const r = await fetch('/api/threads/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          threadId: tid,
+          expertId: t.expertId,
+          message: text,
+          history: updatedMsgs,
+        }),
+      })
+      const d = await r.json()
+      setTyping((o) => ({ ...o, [tid]: false }))
+      receive(t.expertId, d?.reply || REPLIES[n % REPLIES.length])
+    } catch {
+      setTyping((o) => ({ ...o, [tid]: false }))
+      receive(t.expertId, REPLIES[n % REPLIES.length])
+    }
   }
+
+  const startExpertChat = (expert) => {
+    const existing = threads.find((t) => t.expertId === expert.id)
+    if (existing) {
+      setTab('messages')
+      openThread(existing.id)
+      return
+    }
+    const newId = Math.max(0, ...threads.map((x) => x.id)) + 1
+    const welcome = {
+      me: false,
+      t: `Hi! I'm ${expert.name} (${expert.role}). How can I help you today?`,
+      ts: Date.now(),
+    }
+    setThreads((a) => [{ id: newId, expertId: expert.id, unread: 0, msgs: [welcome] }, ...a])
+    setTab('messages')
+    setOpenId(newId)
+  }
+
   const openThread = (id) => { setOpenId(id); setThreads((a) => a.map((t) => (t.id === id ? { ...t, unread: 0 } : t))) }
   // if a message lands in the thread being viewed, keep it read
   useEffect(() => { if (tab === 'messages' && openId) setThreads((a) => (a.some((t) => t.id === openId && t.unread) ? a.map((t) => (t.id === openId ? { ...t, unread: 0 } : t)) : a)) }, [tab, openId, threads])
@@ -87,16 +144,29 @@ export default function Shell({ user, theme, notify, onLogout, onUpdate }) {
     })
   }, [now, sessions, push])
 
-  const onSave = (id) => setSaved((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
+  const onSave = (id) => {
+    setSaved((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
+    fetch('/api/saved', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expertId: id }) }).catch(() => {})
+  }
   const confirm = (e, v) => {
     if (credits < e.rate) { notify('Not enough credits. Top up in Profile'); return }
     const at = slotToTs(v.day, v.time)
     setCredits((c) => c - e.rate)
-    setSessions((a) => [{ id: Date.now(), title: `Session with ${e.name}`, expertId: e.id, at, when: fmtWhen(at), mins: 60, status: 'upcoming' }, ...a])
+    const newSession = { id: Date.now(), title: `Session with ${e.name}`, expertId: e.id, at, when: fmtWhen(at), mins: 60, status: 'upcoming' }
+    setSessions((a) => [newSession, ...a])
+    fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expertId: e.id, at, mins: 60, title: newSession.title }) }).catch(() => {})
     setBooking(null); setTab('sessions'); notify('Booked with ' + e.name)
   }
-  const reschedule = (id, v) => { const at = slotToTs(v.day, v.time); setSessions((a) => a.map((s) => (s.id === id ? { ...s, at, when: fmtWhen(at) } : s))) }
-  const topUp = (a, label, txn) => { setCredits((c) => c + a); push({ kind: 'pay', title: 'Payment received', body: `₹${a.toLocaleString('en-IN')} added via ${label} · ${txn}`, target: { tab: 'profile' } }) }
+  const reschedule = (id, v) => {
+    const at = slotToTs(v.day, v.time)
+    setSessions((a) => a.map((s) => (s.id === id ? { ...s, at, when: fmtWhen(at) } : s)))
+    fetch(`/api/sessions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ at }) }).catch(() => {})
+  }
+  const topUp = (a, label, txn) => {
+    setCredits((c) => c + a)
+    fetch('/api/credits/topup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount: a }) }).catch(() => {})
+    push({ kind: 'pay', title: 'Payment received', body: `₹${a.toLocaleString('en-IN')} added via ${label} · ${txn}`, target: { tab: 'profile' } })
+  }
 
   const liveSessions = useMemo(() => sessions.map((s) => { if (s.status !== 'upcoming') return s; const left = s.at - now; return { ...s, left, soon: left <= 15 * MIN && left > -s.mins * MIN } }), [sessions, now])
   const unread = threads.reduce((n, t) => n + t.unread, 0)
@@ -130,6 +200,7 @@ export default function Shell({ user, theme, notify, onLogout, onUpdate }) {
         <div className="side-foot">
           <UserAvatar user={user} size={38} />
           <div className="grow"><b className="sm">{user.name}</b><div className="muted sm clip">{user.email}</div></div>
+          <button className="icon-btn sm" onClick={() => setAiHelp(true)} aria-label="AI Help"><Icon n="help" size={16} /></button>
           <button className="icon-btn sm" onClick={() => setPanel(true)} aria-label="Notifications"><Icon n="bell" size={16} />{unseen > 0 && <i className="dot sm" />}</button>
           <button className="icon-btn sm" onClick={theme.toggle} aria-label="Switch theme"><Icon n={theme.isDark ? 'sun' : 'moon'} size={16} /></button>
         </div>
@@ -139,6 +210,7 @@ export default function Shell({ user, theme, notify, onLogout, onUpdate }) {
         <header className="topbar">
           <Logo />
           <div className="top-r">
+            <button className="icon-btn" onClick={() => setAiHelp(true)} aria-label="AI Help"><Icon n="help" size={18} /></button>
             <button className="icon-btn" onClick={theme.toggle} aria-label="Switch theme"><Icon n={theme.isDark ? 'sun' : 'moon'} size={18} /></button>
             <button className="icon-btn" onClick={() => setPanel(true)} aria-label={unseen ? `Notifications, ${unseen} new` : 'Notifications'}><Icon n="bell" size={18} />{unseen > 0 && <i className="dot sm" />}</button>
           </div>
@@ -146,15 +218,24 @@ export default function Shell({ user, theme, notify, onLogout, onUpdate }) {
         <main className="content">
           {tab === 'home' && <Home saved={saved} onSave={onSave} onBook={setBooking} />}
           {tab === 'sessions' && <Sessions sessions={liveSessions} setSessions={setSessions} onResched={reschedule} notify={notify} />}
-          {tab === 'messages' && <Messages threads={threads} openId={openId} setOpenId={setOpenId} onOpen={openThread} onSend={send} typing={typing} />}
+          {tab === 'messages' && <Messages threads={threads} openId={openId} setOpenId={setOpenId} onOpen={openThread} onSend={send} onStartExpert={startExpertChat} typing={typing} />}
           {tab === 'saved' && <Saved saved={saved} onSave={onSave} onBook={setBooking} goHome={() => setTab('home')} />}
-          {tab === 'profile' && <Profile user={user} stats={stats} credits={credits} theme={theme} prefs={prefs} setPrefs={setPrefs} onUpdate={onUpdate} onTopUp={topUp} onLogout={onLogout} notify={notify} />}
+          {tab === 'profile' && <Profile user={user} stats={stats} credits={credits} theme={theme} prefs={prefs} setPrefs={setPrefs} onUpdate={(u) => { onUpdate(u); fetch('/api/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: u }) }).catch(() => {}) }} onTopUp={topUp} onLogout={onLogout} onOpenAiHelp={() => setAiHelp(true)} notify={notify} />}
         </main>
       </div>
 
       <nav className={'bottom' + (tab === 'messages' && openId ? ' hide' : '')} aria-label="Main">{nav('b-link')}</nav>
       {panel && <NotifSheet items={notifs} onOpen={openNotif} onReadAll={() => setNotifs((a) => a.map((n) => ({ ...n, read: true })))} onClose={() => setPanel(false)} />}
       {booking && <BookSheet expert={booking} onConfirm={confirm} onClose={() => setBooking(null)} />}
+      {aiHelp && (
+        <AiHelpSheet
+          credits={credits}
+          upcomingCount={stats.upcoming}
+          onClose={() => setAiHelp(false)}
+          onBookExpert={(ex) => { setAiHelp(false); setBooking(ex) }}
+          onMessageExpert={(ex) => { setAiHelp(false); startExpertChat(ex) }}
+        />
+      )}
     </div>
   )
 }

@@ -3,7 +3,7 @@ import Icon from '../components/Icon.jsx'
 import Avatar from '../components/Avatar.jsx'
 import { EXPERTS, chatTime } from '../data.js'
 
-export default function Messages({ threads, openId, setOpenId, onOpen, onSend, typing }) {
+export default function Messages({ threads, openId, setOpenId, onOpen, onSend, onStartExpert, typing }) {
   const [text, setText] = useState('')
   const [box, setBox] = useState(null)
   const end = useRef(), ta = useRef()
@@ -61,6 +61,15 @@ export default function Messages({ threads, openId, setOpenId, onOpen, onSend, t
   return (
     <>
       <h1 className="page-t">Messages</h1>
+      {onStartExpert && (
+        <div className="pills" role="group" aria-label="Message an expert" style={{ marginBottom: 10 }}>
+          {EXPERTS.map((ex) => (
+            <button key={ex.id} className="chip pill" onClick={() => onStartExpert(ex)}>
+              + {ex.name.split(' ')[0]} ({ex.cat})
+            </button>
+          ))}
+        </div>
+      )}
       <div className="list">
         {[...threads].sort((a, b) => b.msgs.at(-1).ts - a.msgs.at(-1).ts).map((t) => {
           const ex = EXPERTS.find((x) => x.id === t.expertId), last = t.msgs[t.msgs.length - 1]

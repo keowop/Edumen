@@ -72,7 +72,7 @@ function EditSheet({ user, onSave, onClose, notify }) {
   )
 }
 
-export default function Profile({ user, stats, credits, theme, prefs, setPrefs, onUpdate, onTopUp, onLogout, notify }) {
+export default function Profile({ user, stats, credits, theme, prefs, setPrefs, onUpdate, onTopUp, onLogout, onOpenAiHelp, notify }) {
   const [sheet, setSheet] = useState(null)
   const rows = [
     { i: 'card', t: 'Payment Methods', s: 'Google Pay, UPI, cards', go: () => setSheet('top') },
@@ -80,7 +80,7 @@ export default function Profile({ user, stats, credits, theme, prefs, setPrefs, 
     { i: 'bell', t: 'Notifications', s: 'Session reminders, messages, picks for you', sw: prefs.notif, toggle: () => { if (!prefs.notif) askNotifPermission(); setPrefs({ ...prefs, notif: !prefs.notif }) } },
     { i: 'lock', t: 'App lock', s: 'Ask for biometrics on open', sw: prefs.lock, toggle: () => setPrefs({ ...prefs, lock: !prefs.lock }) },
     { i: 'shield', t: 'Privacy & Security', s: 'Data and account safety', go: () => notify('Privacy settings coming soon') },
-    { i: 'help', t: 'Help & Support', s: 'FAQs and live chat', go: () => notify('Support: help@consulthub.app') },
+    { i: 'help', t: 'Help & Support (AI Concierge)', s: 'FAQs, expert matching and live AI help', go: () => (onOpenAiHelp ? onOpenAiHelp() : notify('Support: help@consulthub.app')) },
   ]
   return (
     <div className="pf">

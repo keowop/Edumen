@@ -13,7 +13,14 @@ export default function Sessions({ sessions, setSessions, onResched, notify }) {
   const [v, setV] = useState({ day: null, time: null })
   const list = sessions.filter((s) => s.status === tab)
 
-  const update = (id, patch) => setSessions((all) => all.map((s) => (s.id === id ? { ...s, ...patch } : s)))
+  const update = (id, patch) => {
+    setSessions((all) => all.map((s) => (s.id === id ? { ...s, ...patch } : s)))
+    fetch(`/api/sessions/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }).catch(() => {})
+  }
   const save = () => {
     onResched(resch.id, v)
     setResch(null); notify('Session rescheduled')
